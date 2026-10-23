@@ -1,0 +1,31 @@
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "windfc"
+version = "0.1.0"
+description = "German wind power forecast from ECMWF IFS ensemble, verified against actual generation"
+requires-python = ">=3.10"
+dependencies = [
+    "ecmwf-opendata",
+    "eccodes",
+    "numpy",
+    "pandas",
+    "xarray",
+    "pyarrow",
+    "requests",
+    "fastapi",
+    "uvicorn",
+    "matplotlib",
+    "pyyaml",
+]
+
+[project.optional-dependencies]
+dev = ["pytest", "httpx"]
+
+[tool.setuptools.packages.find]
+where = ["src"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]

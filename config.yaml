@@ -1,0 +1,50 @@
+# Forecast vs Generation: configuration
+# All capacities in MW, wind speeds in m/s, coordinates in degrees (WGS84).
+
+data_dir: data
+# ecmwf-opendata source: ecmwf (fastest, last ~4 days) or azure (archive, slower).
+# aws also has the archive, but S3 answers the client's multi-range requests with "503 Slow Down".
+source: ecmwf
+
+# Box cropped out of the global 0.25 deg ENS fields: Germany plus its North Sea / Baltic EEZ.
+bbox:
+  lat_min: 47.0
+  lat_max: 56.0
+  lon_min: 3.5
+  lon_max: 15.5
+
+# Hub-height adjustment of the 100 m wind with a power-law shear profile: v_hub = v100 * (h/100)^alpha
+shear:
+  enabled: true
+  alpha: 0.14
+
+# Generic fleet power curves as (wind speed, capacity factor) points, linearly interpolated.
+# Above cut_out the output is zero.
+power_curves:
+  onshore:
+    hub_height: 120
+    cut_out: 25.0
+    points: [[0, 0], [3, 0], [4, 0.04], [5, 0.10], [6, 0.18], [7, 0.29], [8, 0.42],
+             [9, 0.57], [10, 0.72], [11, 0.85], [12, 0.94], [13, 0.98], [14, 1.0], [25, 1.0]]
+  offshore:
+    hub_height: 100
+    cut_out: 25.0
+    points: [[0, 0], [3, 0], [4, 0.05], [5, 0.12], [6, 0.22], [7, 0.35], [8, 0.50],
+             [9, 0.66], [10, 0.81], [11, 0.92], [12, 0.98], [13, 1.0], [25, 1.0]]
+
+# Share of nameplate capacity that is actually available (maintenance, wakes, grid losses).
+availability:
+  onshore: 0.90
+  offshore: 0.90
+
+# Regions: a lat/lon box, the fleet type and the installed capacity in that box.
+# Rough 2026 split of ~67 GW onshore / ~10 GW offshore across German states (Bundesnetzagentur/SMARD
+# totals, approximate). Onshore regions only use land cells and offshore regions only sea cells
+# when a land-sea mask is available.
+regions:
+  north:        {type: onshore,  capacity_mw: 23000, lat: [52.0, 55.1], lon: [6.7, 11.5]}   # NI, SH, HB, HH
+  east:         {type: onshore,  capacity_mw: 23000, lat: [50.3, 54.7], lon: [10.5, 15.0]}  # BB, ST, MV, SN, TH, BE
+  west:         {type: onshore,  capacity_mw: 16000, lat: [49.1, 52.5], lon: [5.9, 10.2]}   # NW, HE, RP, SL
+  south:        {type: onshore,  capacity_mw: 5000,  lat: [47.3, 50.5], lon: [7.5, 13.8]}   # BW, BY
+  north_sea:    {type: offshore, capacity_mw: 8300,  lat: [53.6, 55.2], lon: [5.8, 8.2]}
+  baltic:       {type: offshore, capacity_mw: 1600,  lat: [54.3, 55.0], lon: [12.5, 14.5]}
