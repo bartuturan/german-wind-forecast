@@ -13,23 +13,7 @@ ECMWF open data (ENS, 50 perturbed members, 100 m u/v, 0.25°)
 
 ![Fan chart: ECMWF ENS 2026-10-20 00Z forecast vs actual German wind generation](docs/fan_chart_2026-10-20T00.png)
 
-## Results (4 ENS runs, 20–21 Oct 2026, 48 h each)
-
-Each run was scored with scale factors fitted on the other three runs (leave-one-run-out):
-
-| Run | MAE raw → calibrated (GW) | CRPS raw → calibrated (GW) | P10–P90 coverage raw → calibrated |
-|---|---|---|---|
-| 2026-10-20 00Z | 2.98 → 2.01 | 2.12 → 1.47 | 59% → 76% |
-| 2026-10-20 12Z | 6.55 → 2.39 | 4.89 → 1.58 | 18% → 94% |
-| 2026-10-21 00Z | 4.90 → 2.07 | 3.50 → 1.53 | 35% → 88% |
-| 2026-10-21 12Z | 5.69 → 2.58 | 3.89 → 1.76 | 53% → 100% |
-| **Mean** | **5.03 → 2.26** | **3.60 → 1.58** | **41% → 90%** |
-
-The raw ensemble catches the timing of the ramps but converts wind to too much power. The scale factors are 0.85 onshore and 0.74 offshore. After calibration the P10–P90 band is slightly too wide (90% coverage against a target of about 80%), so spread calibration (EMOS) is the next step.
-
-| Raw | Calibrated |
-|---|---|
-| ![raw](docs/fan_chart_2026-10-20T12_raw.png) | ![calibrated](docs/fan_chart_2026-10-20T12_calibrated.png) |
+See [Results](#results-31-runs-23-sep--21-oct-2026) for the month-long evaluation.
 
 ## Setup
 
@@ -128,6 +112,14 @@ Then open http://127.0.0.1:8000/ for the chart or http://127.0.0.1:8000/docs for
 - **Offshore stays poorly calibrated:** coverage is 25% even after scaling. Most members sit on the flat top of the power curve, so the offshore spread collapses, and a scale factor cannot bring it back. Raw offshore is no better than persistence (CRPSS −0.03).
 - **The bias drifts.** Fitted one week at a time, the actual/forecast ratio rises from 0.78 to 0.86 onshore and from 0.49 to 0.75 offshore over the month. The expanding-window scale lags behind it, which leaves the calibrated forecast about 1.1 GW too low (the rank histogram slopes up to the right).
 - **Caveats:** this is one month (autumn), and neighbouring valid times are strongly correlated, so treat it as about 24 independent days, not 248 cases.
+
+![Rank histograms: raw piles up on the left (forecast too high); calibrated is close to flat](docs/rank_histogram.png)
+
+The 2026-10-20 12Z run, raw and calibrated with the rolling-origin scales it would have had live:
+
+| Raw | Calibrated (out-of-sample) |
+|---|---|
+| ![raw](docs/fan_chart_2026-10-20T12_raw.png) | ![calibrated](docs/fan_chart_2026-10-20T12_calibrated.png) |
 
 ## Limitations and next steps
 
