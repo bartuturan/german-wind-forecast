@@ -52,7 +52,11 @@ On Windows, `eccodes` installs from a binary wheel. If that fails, use `conda in
 # full 6-day horizon of the newest run
 .venv/Scripts/python scripts/run_pipeline.py --run latest --max-step 144
 
-# after several runs: fit per-fleet scale factors with leave-one-run-out scores
+# backfill a month of 00Z runs from the Azure archive (48 h, 6-hourly steps, ~1.2 GB download per run;
+# retries with backoff, kills a hung run after 30 min, then refetches actuals for the whole range)
+.venv/Scripts/python scripts/backfill.py --start 2026-09-23 --end 2026-10-19
+
+# rolling-origin evaluation of the calibration, pooled over all runs; then a final fit for new runs
 .venv/Scripts/python scripts/calibrate.py
 
 # API + chart
@@ -70,7 +74,7 @@ Then open http://127.0.0.1:8000/ for the chart or http://127.0.0.1:8000/docs for
 | `GET /runs` | Cached runs and the installed capacity |
 | `GET /forecast?run=latest&fleet=total&calibrated=false` | Ensemble mean and P10/P25/P50/P75/P90 per valid time (MW) |
 | `GET /actuals?start=...&end=...` | Actual onshore, offshore and total wind output (MW, 15 min) |
-| `GET /verify?run=latest` | MAE, RMSE and bias of the median, CRPS and P10–P90 coverage, both overall and by lead time |
+| `GET /verify?run=latest` | MAE, RMSE and bias of the median, CRPS, P10–P90 coverage and CRPS skill against persistence: overall, by lead time and for the day-ahead window, plus the rank histogram |
 | `GET /chart?run=latest` | Fan chart PNG with the actuals drawn over it |
 
 `fleet` can be `total`, `onshore` or `offshore`.
@@ -85,8 +89,10 @@ Then open http://127.0.0.1:8000/ for the chart or http://127.0.0.1:8000/docs for
 | [src/windfc/power.py](src/windfc/power.py) | Wind speed, shear and power curve |
 | [src/windfc/aggregate.py](src/windfc/aggregate.py) | Regional cos(lat)-weighted CF × capacity, giving MW per member; quantiles |
 | [src/windfc/actuals.py](src/windfc/actuals.py) | Energy-Charts `public_power` with SMARD `chart_data` as fallback; alignment to valid times |
-| [src/windfc/verify.py](src/windfc/verify.py) | CRPS (ensemble form), MAE, RMSE, bias, coverage, by lead time |
-| [src/windfc/calibrate.py](src/windfc/calibrate.py) | Least-squares scale factor per fleet |
+| [src/windfc/verify.py](src/windfc/verify.py) | Per-valid-time score table (CRPS, randomized PIT, persistence, day-ahead flag) and pooled scores |
+| [src/windfc/calibrate.py](src/windfc/calibrate.py) | Least-squares scale factor per fleet, fitted only on actuals known before a cutoff |
+| [scripts/backfill.py](scripts/backfill.py) | Runs the pipeline over a date range, then refetches the actuals for the whole range |
+| [scripts/calibrate.py](scripts/calibrate.py) | Rolling-origin evaluation (`data/evaluation.json`, `data/rank_histogram.png`) and the final fit |
 | [src/windfc/api.py](src/windfc/api.py), [chart.py](src/windfc/chart.py) | FastAPI service and matplotlib fan chart |
 
 ## Method notes (interview talking points)
@@ -98,14 +104,35 @@ Then open http://127.0.0.1:8000/ for the chart or http://127.0.0.1:8000/docs for
 - **Verification:**
   - MAE and RMSE of the median show deterministic skill.
   - CRPS = E|X − y| − ½E|X − X′| scores the whole distribution. It is in MW, and with a single member it reduces to MAE.
-  - P10–P90 coverage should be about 80%. Lower means the ensemble is under-dispersive, which is typical for raw ENS in the short range.
+  - P10–P90 coverage should be about 80%. Low coverage can mean an under-dispersive ensemble or a biased one; the rank histogram separates the two (see Results: here it was bias).
   - Scores are broken down by lead time to show how skill decays.
-- **Calibration:** one multiplicative scale per fleet is fitted on other runs (leave-one-run-out), so it corrects capacity, curve and availability bias without in-sample cheating.
+  - **Day-ahead window:** the 00 UTC run is the one in hand before the 12:00 CET day-ahead auction gate closure, so the slice that matters for trading is its next Berlin delivery day (lead about 22–46 h). 12 UTC runs arrive after gate closure and never count as day-ahead.
+  - **Persistence benchmark:** the actual at the run's base time, held for every lead. ENS and persistence then use information up to the same moment. Persistence is deterministic, so its CRPS is its MAE, and CRPSS = 1 − CRPS_ens / MAE_persistence.
+  - **Rank histogram:** the rank of the actual among the 50 members, randomized over ties (the offshore fleet often has all members on the flat top of the curve) and mapped to [0, 1), so any number of bins has a flat expectation. A U shape means under-dispersion, a hump means over-dispersion, and a pile on the left means the forecast is too high.
+- **Calibration, rolling origin:** runs are taken in base-time order. Each run is calibrated with scales fitted only on earlier runs and only on actuals known at its base time, which is how it would have run live. Leave-one-run-out is not out of sample here: runs overlap in valid time, so a held-out run's actuals sit in the other runs' training data. The first `--min-train` runs (default 7) are a warm-up and are not scored. `calibration.json` keeps each run's rolling-origin scales, and the API uses them for that run (`calibration_scope: out-of-sample`); other runs get the fit on all runs (`all-runs`).
+
+## Results (31 runs, 23 Sep – 21 Oct 2026)
+
+29 daily 00Z runs (48 h, 6-hourly) plus two 12Z runs (3-hourly). Rolling origin: the first 7 runs are warm-up, and the other 24 runs (248 valid times) are scored. Calibrated means each run uses the scales fitted only on what was known at its base time. Total = onshore + offshore, MW. From `scripts/calibrate.py`.
+
+| Total | n | MAE | CRPS | Bias | P10–P90 cov. | CRPSS vs persistence |
+|---|---|---|---|---|---|---|
+| Raw, all leads | 248 | 4544 | 3271 | +4446 | 35% | 0.64 |
+| Calibrated, all leads | 248 | 1759 | 1296 | −1095 | 79% | 0.86 |
+| Raw, day-ahead | 96 | 4126 | 2909 | +4011 | 46% | 0.74 |
+| **Calibrated, day-ahead** | 96 | **1919** | **1382** | −1379 | **80%** | **0.88** |
+| Persistence, day-ahead | 96 | 11195 | | | | |
+
+- **The raw forecast is about 4.4 GW too high, and that bias, not a lack of spread, is what drags coverage down.** Once the bias is scaled away, total coverage is 79–80%, and the calibrated rank histogram (`data/rank_histogram.png`) has no U shape.
+- **Day-ahead MAE of 1.9 GW is about 2.5% of the ~77 GW installed.** It beats persistence clearly (CRPSS 0.88). The next benchmark to beat is the TSOs' own day-ahead forecast.
+- **Offshore stays poorly calibrated:** coverage is 25% even after scaling. Most members sit on the flat top of the power curve, so the offshore spread collapses, and a scale factor cannot bring it back. Raw offshore is no better than persistence (CRPSS −0.03).
+- **The bias drifts.** Fitted one week at a time, the actual/forecast ratio rises from 0.78 to 0.86 onshore and from 0.49 to 0.75 offshore over the month. The expanding-window scale lags behind it, which leaves the calibrated forecast about 1.1 GW too low (the rank histogram slopes up to the right).
+- **Caveats:** this is one month (autumn), and neighbouring valid times are strongly correlated, so treat it as about 24 independent days, not 248 cases.
 
 ## Limitations and next steps
 
 - Capacities and region boxes are rough. Next step: per-turbine capacity and hub height from the Marktstammdatenregister.
 - There is no modelling of curtailment (redispatch, negative prices), icing, wakes or outages. Availability is a single constant factor.
 - The fleet power curve is generic. A better approach is to learn an empirical curve (wind → CF) from history.
-- Calibration only rescales. Next step: EMOS / NGR or quantile regression to also fix the spread, and a comparison against ICON-EU and the DWD ICON-D2-EPS ensemble.
+- Calibration only rescales, with an expanding window that lags the drifting bias. Next steps: a trailing window (7–14 days), an empirical fleet power curve without a hard plateau (offshore spread), EMOS / NGR or quantile regression for the spread, and benchmarks against the TSO day-ahead forecast (SMARD / ENTSO-E), ICON-EU and ICON-D2-EPS.
 - The forecast is instantaneous every 3 h, while the actuals are 15-min values averaged over an hour around each valid time.

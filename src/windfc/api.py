@@ -37,14 +37,16 @@ def _resolve(run: str) -> str:
     return run
 
 
-def _members(run: str, calibrated: bool) -> pd.DataFrame:
+def _members(run: str, calibrated: bool) -> tuple[pd.DataFrame, str | None]:
+    """Member forecast of a run and the calibration scope ("out-of-sample", "all-runs" or None)."""
     members = store.load_forecast(run)
-    if calibrated:
-        scales = load_scales(store.calibration_path())
-        if scales is None:
-            raise HTTPException(404, "no calibration; run scripts/calibrate.py first")
-        members = apply_scales(members, scales)
-    return members
+    if not calibrated:
+        return members, None
+    loaded = load_scales(store.calibration_path(), run)
+    if loaded is None:
+        raise HTTPException(404, "no calibration; run scripts/calibrate.py first")
+    scales, scope = loaded
+    return apply_scales(members, scales), scope
 
 
 def _utc(t: datetime) -> pd.Timestamp:
@@ -81,9 +83,10 @@ def runs():
 def forecast(run: str = "latest", fleet: str = Query("total", pattern="^(total|onshore|offshore)$"),
              calibrated: bool = False):
     run = _resolve(run)
-    summary = summarize(_members(run, calibrated), f"{fleet}_mw")
+    members, scope = _members(run, calibrated)
+    summary = summarize(members, f"{fleet}_mw")
     return {"run": run, "fleet": fleet, "unit": "MW", "calibrated": calibrated,
-            "data": _records(summary)}
+            "calibration_scope": scope, "data": _records(summary)}
 
 
 @app.get("/actuals")
@@ -99,10 +102,10 @@ def actuals(start: datetime, end: datetime):
 def verify_run(run: str = "latest", fleet: str = Query("total", pattern="^(total|onshore|offshore)$"),
                calibrated: bool = False):
     run = _resolve(run)
-    members = _members(run, calibrated)
+    members, scope = _members(run, calibrated)
     times = pd.DatetimeIndex(members["valid_time"].unique())
     aligned = align_to(store.load_actuals(), times)
-    return {"run": run, "fleet": fleet, "calibrated": calibrated,
+    return {"run": run, "fleet": fleet, "calibrated": calibrated, "calibration_scope": scope,
             **verify(members, aligned[f"{fleet}_mw"], f"{fleet}_mw")}
 
 
@@ -110,9 +113,10 @@ def verify_run(run: str = "latest", fleet: str = Query("total", pattern="^(total
 def chart(run: str = "latest", fleet: str = Query("total", pattern="^(total|onshore|offshore)$"),
           calibrated: bool = False):
     run = _resolve(run)
-    members = _members(run, calibrated)
+    members, scope = _members(run, calibrated)
     act = store.load_actuals()
     actual = act[f"{fleet}_mw"] if not act.empty else None
     label = {"total": "onshore + offshore", "onshore": "onshore", "offshore": "offshore"}[fleet]
-    title = f"ECMWF IFS ENS {run}Z, German wind ({label}){' calibrated' if calibrated else ''}"
+    cal = f" calibrated ({scope})" if calibrated else ""
+    title = f"ECMWF IFS ENS {run}Z, German wind ({label}){cal}"
     return Response(fan_chart(members, actual, title, f"{fleet}_mw"), media_type="image/png")

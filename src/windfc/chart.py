@@ -39,6 +39,30 @@ def fan_chart(members: pd.DataFrame, actual: pd.Series | None, title: str,
     ax.legend(loc="upper left", frameon=False)
     fig.tight_layout()
 
+    return _png(fig)
+
+
+def rank_histogram_chart(pits: dict[str, pd.Series], title: str, bins: int = 10) -> bytes:
+    """PNG bytes: one panel per forecast variant, randomized PIT in equal bins against the flat line.
+
+    U shape: under-dispersive. Hump: over-dispersive. Slope: biased (left-heavy = forecast too high).
+    """
+    fig, axes = plt.subplots(1, len(pits), figsize=(4.2 * len(pits), 3.6), dpi=110,
+                             sharey=True, squeeze=False)
+    for ax, (label, pit) in zip(axes[0], pits.items()):
+        ax.hist(pit, bins=bins, range=(0, 1), color=BAND_COLOR, alpha=0.8, edgecolor="white")
+        ax.axhline(len(pit) / bins, color="black", linestyle="--", linewidth=1, label="calibrated")
+        ax.set_title(f"{label} (n={len(pit)})")
+        ax.set_xlabel("rank of actual among members")
+        ax.set_xlim(0, 1)
+    axes[0][0].set_ylabel("cases")
+    axes[0][0].legend(frameon=False)
+    fig.suptitle(title)
+    fig.tight_layout()
+    return _png(fig)
+
+
+def _png(fig) -> bytes:
     buf = io.BytesIO()
     fig.savefig(buf, format="png")
     plt.close(fig)
