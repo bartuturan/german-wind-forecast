@@ -114,6 +114,11 @@ def rank_histogram(pit: pd.Series, bins: int = PIT_BINS) -> dict:
     return {"bins": bins, "counts": [int(c) for c in counts], "expected": len(pit) / bins}
 
 
+def scores_by(table: pd.DataFrame, key: str) -> list[dict]:
+    """Scores per value of a column (e.g. "run"), sorted by that value."""
+    return [{key: k, **_scores(grp)} for k, grp in table.groupby(key, sort=True)]
+
+
 def summarize_scores(table: pd.DataFrame, lead_bins: tuple[int, ...] = LEAD_BINS) -> dict:
     """Overall scores, scores per lead-time bin (hours), the day-ahead window and the rank histogram."""
     if table.empty:

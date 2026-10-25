@@ -40,7 +40,8 @@ On Windows, `eccodes` installs from a binary wheel. If that fails, use `conda in
 # retries with backoff, kills a hung run after 30 min, then refetches actuals for the whole range)
 .venv/Scripts/python scripts/backfill.py --start 2026-09-23 --end 2026-10-19
 
-# rolling-origin evaluation of the calibration, pooled over all runs; then a final fit for new runs
+# rolling-origin evaluation of the calibration, pooled over all runs; then a final fit for new runs.
+# Writes data/evaluation.json, the scorecard data/scores.png and data/rank_histogram.png
 .venv/Scripts/python scripts/calibrate.py
 
 # API + chart
@@ -60,6 +61,9 @@ Then open http://127.0.0.1:8000/ for the chart or http://127.0.0.1:8000/docs for
 | `GET /actuals?start=...&end=...` | Actual onshore, offshore and total wind output (MW, 15 min) |
 | `GET /verify?run=latest` | MAE, RMSE and bias of the median, CRPS, P10–P90 coverage and CRPS skill against persistence: overall, by lead time and for the day-ahead window, plus the rank histogram |
 | `GET /chart?run=latest` | Fan chart PNG with the actuals drawn over it |
+| `GET /evaluation` | Pooled raw and calibrated scores of all scored runs: overall, by lead time, day-ahead and per run (`data/evaluation.json`) |
+| `GET /evaluation/chart` | The scorecard PNG: every score, raw against calibrated, plus bias per run |
+| `GET /evaluation/rank-histogram` | The rank histogram PNG |
 
 `fleet` can be `total`, `onshore` or `offshore`.
 
@@ -76,8 +80,8 @@ Then open http://127.0.0.1:8000/ for the chart or http://127.0.0.1:8000/docs for
 | [src/windfc/verify.py](src/windfc/verify.py) | Per-valid-time score table (CRPS, randomized PIT, persistence, day-ahead flag) and pooled scores |
 | [src/windfc/calibrate.py](src/windfc/calibrate.py) | Least-squares scale factor per fleet, fitted only on actuals known before a cutoff |
 | [scripts/backfill.py](scripts/backfill.py) | Runs the pipeline over a date range, then refetches the actuals for the whole range |
-| [scripts/calibrate.py](scripts/calibrate.py) | Rolling-origin evaluation (`data/evaluation.json`, `data/rank_histogram.png`) and the final fit |
-| [src/windfc/api.py](src/windfc/api.py), [chart.py](src/windfc/chart.py) | FastAPI service and matplotlib fan chart |
+| [scripts/calibrate.py](scripts/calibrate.py) | Rolling-origin evaluation (`data/evaluation.json`, `data/scores.png`, `data/rank_histogram.png`) and the final fit |
+| [src/windfc/api.py](src/windfc/api.py), [chart.py](src/windfc/chart.py) | FastAPI service; matplotlib fan chart, rank histogram and scorecard |
 
 ## Method notes (interview talking points)
 
@@ -106,6 +110,8 @@ Then open http://127.0.0.1:8000/ for the chart or http://127.0.0.1:8000/docs for
 | Raw, day-ahead | 96 | 4126 | 2909 | +4011 | 46% | 0.74 |
 | **Calibrated, day-ahead** | 96 | **1919** | **1382** | −1379 | **80%** | **0.88** |
 | Persistence, day-ahead | 96 | 11195 | | | | |
+
+![Scorecard: every verification score, raw against calibrated, by lead time and for the day-ahead window, plus bias per run](docs/scores.png)
 
 - **The raw forecast is about 4.4 GW too high, and that bias, not a lack of spread, is what drags coverage down.** Once the bias is scaled away, total coverage is 79–80%, and the calibrated rank histogram (`data/rank_histogram.png`) has no U shape.
 - **Day-ahead MAE of 1.9 GW is about 2.5% of the ~77 GW installed.** It beats persistence clearly (CRPSS 0.88). The next benchmark to beat is the TSOs' own day-ahead forecast.

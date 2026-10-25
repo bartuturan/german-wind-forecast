@@ -3,7 +3,7 @@ import pandas as pd
 import pytest
 
 from windfc.verify import (crps_ensemble, is_day_ahead, randomized_pit, rank_histogram,
-                           score_table, verify)
+                           score_table, scores_by, verify)
 
 
 def test_crps_single_member_is_absolute_error():
@@ -35,6 +35,17 @@ def test_verify_scores():
     assert o["coverage_p10_p90"] == pytest.approx(2 / 3)
     assert res["by_lead"][0]["lead_h"] == "0-24"
     assert sum(res["rank_histogram"]["counts"]) == 3
+
+
+def test_scores_by_run():
+    times = pd.date_range("2026-10-01", periods=4, freq="3h", tz="UTC")
+    actual = pd.Series([1500.0, 1600.0, 2500.0, 1000.0], index=times)
+    table = pd.concat([score_table(_members(times), actual).assign(run="2026-10-02T00"),
+                       score_table(_members(times), actual + 100).assign(run="2026-10-01T00")])
+    rows = scores_by(table, "run")
+    assert [r["run"] for r in rows] == ["2026-10-01T00", "2026-10-02T00"]
+    assert rows[1]["bias_mw"] == pytest.approx(np.mean([0, -100, -1000, 500]))
+    assert rows[0]["bias_mw"] == pytest.approx(rows[1]["bias_mw"] - 100)
 
 
 def test_persistence_is_the_step0_actual():

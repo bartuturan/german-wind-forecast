@@ -6,8 +6,9 @@
 Runs are taken in base-time order. Each run is calibrated with scales fitted only on earlier
 runs and only on actuals that were known at its base time, which is how the scales would have
 been used live. The first --min-train runs are a warm-up and are not scored. Scores are pooled
-over all scored runs: overall, by lead time, the day-ahead window, against persistence, plus a
-rank histogram (data/rank_histogram.png). Results go to data/evaluation.json.
+over all scored runs: overall, by lead time, the day-ahead window, per run, against persistence,
+plus a rank histogram (data/rank_histogram.png). Results go to data/evaluation.json and are
+drawn as a scorecard (data/scores.png), which the API also serves at /evaluation/chart.
 """
 from __future__ import annotations
 
@@ -18,11 +19,11 @@ import pandas as pd
 
 from windfc.actuals import align_to
 from windfc.calibrate import apply_scales, fit_scales, save_scales
-from windfc.chart import rank_histogram_chart
+from windfc.chart import rank_histogram_chart, scores_chart
 from windfc.config import DEFAULT_CONFIG, load_config
 from windfc.download import parse_run
 from windfc.store import Store
-from windfc.verify import score_table, summarize_scores
+from windfc.verify import score_table, scores_by, summarize_scores
 
 COLUMNS = [("mae_mw", "MAE"), ("crps_mw", "CRPS"), ("bias_mw", "bias"),
            ("coverage_p10_p90", "cov"), ("crpss_vs_persistence", "CRPSS")]
@@ -82,7 +83,7 @@ def main() -> None:
             tables[variant].append(score_table(m, aligned[column], column).assign(run=run))
 
     pooled = {v: pd.concat(t, ignore_index=True) for v, t in tables.items()}
-    summaries = {v: summarize_scores(t) for v, t in pooled.items()}
+    summaries = {v: {**summarize_scores(t), "by_run": scores_by(t, "run")} for v, t in pooled.items()}
     scored = list(by_run)
     print(f"{args.fleet}: {len(scored)} runs scored ({scored[0]} .. {scored[-1]}), "
           f"{len(runs) - len(scored)} warm-up runs\n")
@@ -93,15 +94,17 @@ def main() -> None:
     print(scale_table.iloc[[0, -1]].round(3).to_string())
 
     da = {v: t.loc[t["day_ahead"], "pit"] for v, t in pooled.items()}
-    hist_path = store.root / "rank_histogram.png"
+    hist_path = store.rank_histogram_path()
     hist_path.write_bytes(rank_histogram_chart(
         {"raw, all leads": pooled["raw"]["pit"], "calibrated, all leads": pooled["calibrated"]["pit"],
          "calibrated, day-ahead": da["calibrated"]},
         f"Rank histogram, German wind ({args.fleet}), {len(scored)} runs"))
-    eval_path = store.root / "evaluation.json"
-    eval_path.write_text(json.dumps({"fleet": args.fleet, "runs_scored": scored,
-                                     "min_train": args.min_train, **summaries}, indent=2))
-    print(f"\n-> {hist_path}\n-> {eval_path}")
+    evaluation = {"fleet": args.fleet, "runs_scored": scored, "min_train": args.min_train, **summaries}
+    eval_path = store.evaluation_path()
+    eval_path.write_text(json.dumps(evaluation, indent=2))
+    scores_path = store.scores_chart_path()
+    scores_path.write_bytes(scores_chart(evaluation))
+    print(f"\n-> {hist_path}\n-> {eval_path}\n-> {scores_path}")
 
     scales = fit_scales(list(pairs.values()))
     save_scales(store.calibration_path(), scales, by_run)

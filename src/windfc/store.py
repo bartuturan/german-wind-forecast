@@ -31,6 +31,16 @@ class Store:
     def calibration_path(self) -> Path:
         return self.root / "calibration.json"
 
+    # pooled verification written by scripts/calibrate.py
+    def evaluation_path(self) -> Path:
+        return self.root / "evaluation.json"
+
+    def scores_chart_path(self) -> Path:
+        return self.root / "scores.png"
+
+    def rank_histogram_path(self) -> Path:
+        return self.root / "rank_histogram.png"
+
     # wind cube
     def save_cube(self, run: str, cube: dict) -> Path:
         path = self.cube_path(run)

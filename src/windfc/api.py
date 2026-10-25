@@ -5,6 +5,7 @@ Run: uvicorn windfc.api:app --reload
 """
 from __future__ import annotations
 
+import json
 import os
 from datetime import datetime
 
@@ -15,7 +16,7 @@ from fastapi.responses import HTMLResponse, Response
 from .actuals import align_to
 from .aggregate import summarize
 from .calibrate import apply_scales, load_scales
-from .chart import fan_chart
+from .chart import fan_chart, scores_chart
 from .config import DEFAULT_CONFIG, load_config
 from .store import Store
 from .verify import verify
@@ -62,15 +63,29 @@ def _records(df: pd.DataFrame) -> list[dict]:
     return df.round(1).to_dict(orient="records")
 
 
+def _evaluation() -> dict:
+    path = store.evaluation_path()
+    if not path.exists():
+        raise HTTPException(404, "no evaluation; run scripts/calibrate.py first")
+    return json.loads(path.read_text())
+
+
 @app.get("/", response_class=HTMLResponse)
 def index():
     runs = store.runs()
     latest = runs[-1] if runs else None
     img = f'<img src="/chart?run={latest}" style="max-width:100%">' if latest else "<p>No runs cached.</p>"
+    if store.evaluation_path().exists():
+        scores = """<h3>Verification over all scored runs</h3>
+<p><a href="/evaluation">scores as JSON</a></p>
+<img src="/evaluation/chart" style="max-width:100%">
+<img src="/evaluation/rank-histogram" style="max-width:100%">"""
+    else:
+        scores = "<p>No verification yet: run scripts/calibrate.py.</p>"
     return f"""<!doctype html><html><head><meta charset="utf-8"><title>Wind forecast</title></head>
 <body style="font-family:sans-serif;margin:24px">
 <h2>German wind power: ECMWF ENS forecast vs actual</h2>
-<p>Runs cached: {', '.join(runs) or 'none'} · <a href="/docs">API docs</a></p>{img}</body></html>"""
+<p>Runs cached: {', '.join(runs) or 'none'} · <a href="/docs">API docs</a></p>{img}{scores}</body></html>"""
 
 
 @app.get("/runs")
@@ -120,3 +135,23 @@ def chart(run: str = "latest", fleet: str = Query("total", pattern="^(total|onsh
     cal = f" calibrated ({scope})" if calibrated else ""
     title = f"ECMWF IFS ENS {run}Z, German wind ({label}){cal}"
     return Response(fan_chart(members, actual, title, f"{fleet}_mw"), media_type="image/png")
+
+
+@app.get("/evaluation")
+def evaluation():
+    """Pooled raw and calibrated scores of all scored runs: overall, by lead time, day-ahead, per run."""
+    return _evaluation()
+
+
+@app.get("/evaluation/chart")
+def evaluation_chart():
+    """The scorecard: every score, raw against calibrated, by lead time and day-ahead, plus bias per run."""
+    return Response(scores_chart(_evaluation()), media_type="image/png")
+
+
+@app.get("/evaluation/rank-histogram")
+def evaluation_rank_histogram():
+    path = store.rank_histogram_path()
+    if not path.exists():
+        raise HTTPException(404, "no rank histogram; run scripts/calibrate.py first")
+    return Response(path.read_bytes(), media_type="image/png")
